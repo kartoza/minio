@@ -1,0 +1,61 @@
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
+
+ARG TARGETARCH
+ARG MC_RELEASE=RELEASE.2025-08-13T08-35-41Z
+
+ENV GOPATH=/go
+ENV CGO_ENABLED=0
+
+WORKDIR /build
+
+RUN apk add -U --no-cache ca-certificates curl bash
+
+# dl.min.io no longer serves community mc binaries (HTTP 410), so build mc from source.
+# When cross-compiling, go install places the binary in /go/bin/linux_${TARGETARCH}/.
+RUN MC_VERSION=$(echo "${MC_RELEASE#RELEASE.}" | sed -E 's/T([0-9]+)-([0-9]+)-([0-9]+)Z/T\1:\2:\3Z/') && \
+    GOOS=linux GOARCH=${TARGETARCH} go install -trimpath \
+      -ldflags "-s -w -X github.com/minio/mc/cmd.Version=${MC_VERSION} -X github.com/minio/mc/cmd.ReleaseTag=${MC_RELEASE}" \
+      github.com/minio/mc@${MC_RELEASE} && \
+    if [ -f /go/bin/linux_${TARGETARCH}/mc ]; then mv /go/bin/linux_${TARGETARCH}/mc /go/bin/mc; fi && \
+    test -x /go/bin/mc
+
+COPY dockerscripts/download-static-curl.sh /build/download-static-curl
+RUN chmod +x /build/download-static-curl && \
+    /build/download-static-curl
+
+FROM registry.access.redhat.com/ubi9/ubi-micro:latest
+
+ARG TARGETARCH
+ARG RELEASE
+
+LABEL name="MinIO" \
+      version="${RELEASE}" \
+      release="${RELEASE}" \
+      summary="MinIO is a High Performance Object Storage, API compatible with Amazon S3 cloud storage service."
+
+ENV MINIO_ACCESS_KEY_FILE=access_key \
+    MINIO_SECRET_KEY_FILE=secret_key \
+    MINIO_ROOT_USER_FILE=access_key \
+    MINIO_ROOT_PASSWORD_FILE=secret_key \
+    MINIO_KMS_SECRET_KEY_FILE=kms_master_key \
+    MINIO_CONFIG_ENV_FILE=config.env \
+    MC_CONFIG_DIR=/tmp/.mc
+
+RUN chmod -R 777 /usr/bin
+
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build /go/bin/mc /usr/bin/
+COPY --from=build /go/bin/curl* /usr/bin/
+
+# minio binary is built from this repository by the release workflow
+COPY dist/linux-${TARGETARCH}/minio /usr/bin/minio
+
+COPY CREDITS /licenses/CREDITS
+COPY LICENSE /licenses/LICENSE
+COPY dockerscripts/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
+
+EXPOSE 9000
+VOLUME ["/data"]
+
+ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
+CMD ["minio"]

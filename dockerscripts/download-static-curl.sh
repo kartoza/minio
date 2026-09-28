@@ -1,8 +1,11 @@
 #!/bin/bash
 
+# Pinned: releases after v8.11.0 no longer publish a curl-aarch64 asset.
+STATIC_CURL_VERSION="${STATIC_CURL_VERSION:-v8.11.0}"
+
 function download_arch_specific_executable {
 	curl -f -L -s -q \
-		https://github.com/moparisthebest/static-curl/releases/latest/download/curl-$1 \
+		"https://github.com/moparisthebest/static-curl/releases/download/${STATIC_CURL_VERSION}/curl-$1" \
 		-o /go/bin/curl || exit 1
 	chmod +x /go/bin/curl
 }
